@@ -6,7 +6,7 @@ Three ways to package the app, from simplest to safest. Pick one.
 |---|---|---|---|---|
 | **A. Zip + `install.sh`** | Your own machines, sharing with a friend | Very low | No | Install and uninstall tested in a fake home folder |
 | **B. `.deb` package** | A clean install and removal on Ubuntu | Low | No | Package build tested, GTK launch untested |
-| **C. Flatpak** | The strongest isolation | Medium | Yes | Not tested |
+| **C. Flatpak** | The strongest isolation | Medium | Yes | Built and running on Ubuntu 24.04 |
 
 If you are unsure, use **A** now and move to **C** later.
 
@@ -73,9 +73,9 @@ Notes:
 
 ## Option C: Flatpak (strongest isolation)
 
-The app then runs in its own container with no network permission at all, so even a hostile artifact has nowhere to send data. This is the best match for "run locally and safely". It was not tested here, so expect some trial and error on first build.
+The app then runs in its own container with no network permission at all, so even a hostile artifact has nowhere to send data. This is the best match for "run locally and safely". It has been built and run successfully on Ubuntu 24.04 (GNOME runtime 50).
 
-**Step 1.** Bundle the libraries (see the optional step above). A Flatpak with no network permission cannot download them later.
+**Step 1.** The libraries are already bundled in `vendor/` in this repo. If you removed them, re-download (see the optional step above) - a Flatpak with no network permission cannot fetch them later.
 
 **Step 2.** Install the tools once:
 
@@ -99,6 +99,7 @@ finish-args:
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
+  - --filesystem=xdg-data/artifact-deck:create
   # No --share=network on purpose.
 modules:
   - name: artifact-deck

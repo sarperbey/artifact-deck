@@ -2,7 +2,7 @@
 
 For **Ubuntu 24.04 or newer** (GNOME desktop).
 
-> Status: the library, sandbox and React logic were tested in a headless browser. The GTK window itself has not yet been run on a real desktop, so a small first-launch fix is possible. Section 5 covers the likely problems.
+> Status: running and tested on Ubuntu 24.04 via the Flatpak build. Native runs can be blocked by AppArmor's user-namespace restriction - see Section 5.
 
 ## 1. Quick install (recommended)
 
@@ -51,6 +51,7 @@ The first time you run a **React** artifact, the app asks for a one-time downloa
 | `Namespace WebKit not available` or `WebKit 6.0 not found` | `sudo apt install gir1.2-webkit-6.0` |
 | `Namespace Adw not available` | `sudo apt install gir1.2-adw-1` |
 | `AttributeError` mentioning `AlertDialog`, `ToolbarView` or `NavigationView` | Your libadwaita is older than 1.5. Use Ubuntu 24.04 or newer |
+| `bwrap: setting up uid map: Permission denied` or `Failed to fully launch dbus-proxy` | Ubuntu's AppArmor blocks unprivileged user namespaces. Use the Flatpak build (`packing.md`) - do not disable the sandbox. |
 | Window opens but artifacts stay blank or the web process crashes | See the sandbox note below, then open the console (terminal button) for errors |
 | "Download failed" for React libraries | Check your internet connection and press the button again |
 | `.sh` file will not run by double-click | Always start it with `bash install.sh` from a terminal |

@@ -1,5 +1,7 @@
 # Artifact Deck
 
+![CI](https://github.com/sarperbey/artifact-deck/actions/workflows/ci.yml/badge.svg)
+
 A small desktop app for Ubuntu that keeps all your AI-made artifacts (from Claude, Gemini, DeepSeek and others) in one place and runs them **safely and offline**.
 
 ![Library view](screenshots/library.png)
@@ -15,6 +17,18 @@ A small desktop app for Ubuntu that keeps all your AI-made artifacts (from Claud
 - **Stays offline.** After a one-time library download, React artifacts with charts and icons run without a connection.
 
 ![Runner view](screenshots/runner.png)
+
+## Install
+
+**Recommended: Flatpak.** Ubuntu 24.04's AppArmor policy can block WebKitGTK's
+bubblewrap sandbox for native runs; the Flatpak build avoids that and adds
+OS-level network isolation.
+
+    flatpak install --user flathub org.gnome.Platform//50 org.gnome.Sdk//50
+    flatpak-builder --user --install --force-clean build-dir dev.local.ArtifactDeck.yml
+    flatpak run dev.local.ArtifactDeck
+
+See `install.md` for the native install and troubleshooting, `packing.md` for packaging.
 
 ## Using it
 
@@ -73,4 +87,7 @@ Back up or move that folder to take your library with you.
 | `packing.md` | How to turn it into an installable package |
 | `install.sh`, `uninstall.sh`, `make-deb.sh` | Helper scripts |
 | `data/` | App icon and menu entry |
-| `screenshots/` | Mockups used in this page |
+| `SECURITY.md` | Security policy and threat model |
+| `dev.local.ArtifactDeck.yml` | Flatpak build manifest |
+| `tests/` | Regression tests (run with pytest) |
+| `screenshots/` | Real app screenshots |
