@@ -48,7 +48,6 @@ CSS = """
 .src-other { color: @green_4; }
 """
 
-
 # ---------------------------------------------------------------- storage --
 
 class Library:
@@ -109,7 +108,6 @@ class Library:
         self.write_code(a, code)
         self.items.insert(min(idx, len(self.items)), a)
         self.save()
-
 
 # ----------------------------------------------------------------- runner --
 
@@ -280,6 +278,15 @@ class RunnerPage(Adw.NavigationPage):
         return True
 
     def on_policy(self, web, decision, dtype):
+        # Block ALL resource loads (fetch, XHR, images, fonts, etc.) to external origins
+        # This is defense-in-depth beyond CSP connect-src 'none'
+        if dtype == WebKit.PolicyDecisionType.RESPONSE:
+            uri = decision.get_response().get_uri() or ""
+            if not (uri.startswith(("about:", "data:", "blob:")) or uri.startswith(self.base)):
+                decision.ignore()
+                self.log("warn", "Blocked resource: " + uri[:200])
+                return True
+        # Block navigation to external sites
         if dtype in (WebKit.PolicyDecisionType.NAVIGATION_ACTION,
                      WebKit.PolicyDecisionType.NEW_WINDOW_ACTION):
             uri = decision.get_navigation_action().get_request().get_uri() or ""
@@ -325,7 +332,6 @@ class RunnerPage(Adw.NavigationPage):
             self.web.terminate_web_process()
         except Exception:
             pass
-
 
 # ----------------------------------------------------------------- window --
 
@@ -577,7 +583,6 @@ class MainWindow(Adw.ApplicationWindow):
         dlg.connect("response", on_response)
         dlg.present(self)
 
-
 class App(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
@@ -585,7 +590,6 @@ class App(Adw.Application):
     def do_activate(self):
         win = self.props.active_window or MainWindow(self)
         win.present()
-
 
 if __name__ == "__main__":
     sys.exit(App().run(sys.argv))
