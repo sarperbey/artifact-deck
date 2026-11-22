@@ -1,0 +1,26 @@
+app-id: dev.local.ArtifactDeck
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: artifact-deck
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+modules:
+  - name: artifact-deck
+    buildsystem: simple
+    build-commands:
+      - install -d /app/lib/artifact-deck
+      - cp -r artifact_deck.py sandbox.py vendor.py vendor /app/lib/artifact-deck/
+      - install -Dm755 launcher.sh /app/bin/artifact-deck
+      - install -Dm644 data/dev.local.ArtifactDeck.svg /app/share/icons/hicolor/scalable/apps/dev.local.ArtifactDeck.svg
+      - install -Dm644 data/dev.local.ArtifactDeck.desktop /app/share/applications/dev.local.ArtifactDeck.desktop
+    sources:
+      - type: dir
+        path: .
+      - type: script
+        dest-filename: launcher.sh
+        commands:
+          - exec python3 /app/lib/artifact-deck/artifact_deck.py "$@"

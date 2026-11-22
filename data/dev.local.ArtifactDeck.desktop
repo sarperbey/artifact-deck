@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Artifact Deck
+Comment=Local dashboard for small AI apps
+Exec=artifact-deck
+Icon=dev.local.ArtifactDeck
+Terminal=false
+Type=Application
+Categories=Development;Utility;
