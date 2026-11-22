@@ -60,7 +60,17 @@ class Library:
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
-                self.items = data
+                self.items = [a for a in data if isinstance(a, dict)
+                              and re.fullmatch(r"[0-9a-f]{12}", str(a.get("id", "")))
+                              and a.get("type") in EXT and a.get("source") in SOURCES
+                              and isinstance(a.get("name"), str)
+                              and isinstance(a.get("tags", []), list)]
+                for a in self.items:
+                    a.setdefault("fav", False)
+                    a.setdefault("runs", 0)
+                    a.setdefault("created", 0)
+                    a.setdefault("last_run", 0)
+                    a.setdefault("tags", [])
         except (OSError, ValueError):
             pass
 

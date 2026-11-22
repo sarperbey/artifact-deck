@@ -64,7 +64,8 @@ MODULES = {
 }
 
 IMPORT_RE = re.compile(
-    r"^[ \t]*import\s+(?:([\w*{}\s,$]+?)\s+from\s+)?['\"]([^'\"]+)['\"][ \t]*;?[ \t]*\n?", re.M)
+    r"^[ \t]*import\s{1,100}(?:([\w*{},$\s]{1,400}?)\s{1,100}from\s{1,100})?"
+    r"['\"]([^'\"]{1,200})['\"][ \t]*;?[ \t]*\n?", re.M)
 
 def esc_script(s):
     return re.sub(r"</(script)", r"<\/\1", s, flags=re.I)
@@ -77,13 +78,13 @@ def read_vendor(vendor_dir, name):
         return None
 
 def inject_head(doc):
-    # Always prepend CSP as safety net against comment/textarea/SVG bypass
-    result = CSP_META + doc
-    m = re.search(r"<head(?:\s[^>]*)?>", result, re.I)
-    if m and m.start() > len(CSP_META):
-        result = result[:m.end()] + CSP_META + result[m.end():]
-    return result
-
+    # Doctype-aware CSP injection: a doctype token is inert, so inserting
+    # right after it is safe AND preserves standards mode. Without a
+    # doctype, prepend (closes comment/textarea/SVG <head> bypass).
+    m = re.match(r"\s*<!doctype[^>]*>", doc, re.I)
+    if m:
+        return doc[:m.end()] + CSP_META + doc[m.end():]
+    return CSP_META + doc
 def convert_import(clause, expr, skip_name):
     out = []
     clause = clause.strip()
@@ -184,7 +185,7 @@ def build_srcdoc(type_, code, vendor_dir):
     warn = ""
     if missing:
         msg = json.dumps("Not available offline, these parts may be blank: " + ", ".join(missing))
-        warn = "<script>console.warn(" + msg.replace("</", "</") + ")</script>"
+        warn = "<script>console.warn(" + esc_script(msg) + ")</script>"
     first = "<script>" + esc_script(libs[0]) + "</script><script>" + esc_script(libs[1]) + "</script>"
     alias = "<script>window.react=window.React;</script>"
     rest = "".join("<script>" + esc_script(t) + "</script>" for t in libs[2:])
