@@ -3,8 +3,6 @@ import json
 import os
 import re
 
-# Nothing leaves the page and nothing external loads. Inline scripts and eval
-# stay on because artifacts (and Babel) need them.
 CSP = (
     "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; "
     "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; "
@@ -13,8 +11,6 @@ CSP = (
 )
 CSP_META = '<meta http-equiv="Content-Security-Policy" content="%s">' % CSP
 
-# Injected before any page script runs: console capture, a local replacement
-# for window.storage, and a clear failure for Claude API calls.
 BRIDGE_JS = r"""
 (function(){
   function ser(v){try{if(typeof v==="string")return v;if(v instanceof Error)return v.message;return JSON.stringify(v)}catch(e){return String(v)}}
@@ -25,7 +21,6 @@ BRIDGE_JS = r"""
   });
   addEventListener("error",function(e){send("error",(e.message||"Error")+(e.lineno?" @line "+e.lineno:""))});
   addEventListener("unhandledrejection",function(e){send("error","Unhandled rejection: "+ser(e.reason))});
-
   var ls=null,mem={},P="deck:";
   try{ls=window.localStorage;ls.getItem("x")}catch(e){ls=null}
   function G(k){return ls?ls.getItem(P+k):(k in mem?mem[k]:null)}
@@ -38,7 +33,6 @@ BRIDGE_JS = r"""
     delete:function(k,s){return new Promise(function(res){D(k);res({key:k,deleted:true,shared:!!s})})},
     list:function(p,s){return new Promise(function(res){var keys=K().filter(function(k){return !p||k.indexOf(p)===0});res({keys:keys,prefix:p,shared:!!s})})}
   };
-
   function needApi(){send("api","needs-api")}
   var of=window.fetch;
   window.fetch=function(u){
@@ -58,7 +52,6 @@ STUB_JS = (
 
 BASE_FILES = ["react.production.min.js", "react-dom.production.min.js", "babel.min.js"]
 
-# import name -> (browser global, extra vendor files, in load order)
 MODULES = {
     "react": ("React", []),
     "react-dom": ("ReactDOM", []),
@@ -73,10 +66,8 @@ MODULES = {
 IMPORT_RE = re.compile(
     r"^[ \t]*import\s+(?:([\w*{}\s,$]+?)\s+from\s+)?['\"]([^'\"]+)['\"][ \t]*;?[ \t]*\n?", re.M)
 
-
 def esc_script(s):
-    return re.sub(r"</(script)", r"<\\/\1", s, flags=re.I)
-
+    return re.sub(r"</(script)", r"<\/\1", s, flags=re.I)
 
 def read_vendor(vendor_dir, name):
     try:
@@ -85,19 +76,15 @@ def read_vendor(vendor_dir, name):
     except OSError:
         return None
 
-
 def inject_head(doc):
-    for pat, wrap in ((r"<head(?:\s[^>]*)?>", False), (r"<html(?:\s[^>]*)?>", True),
-                      (r"<!doctype[^>]*>", True)):
-        m = re.search(pat, doc, re.I)
-        if m:
-            ins = "<head>%s</head>" % CSP_META if wrap else CSP_META
-            return doc[:m.end()] + ins + doc[m.end():]
-    return CSP_META + doc
-
+    # Always prepend CSP as safety net against comment/textarea/SVG bypass
+    result = CSP_META + doc
+    m = re.search(r"<head(?:\s[^>]*)?>", result, re.I)
+    if m and m.start() > len(CSP_META):
+        result = result[:m.end()] + CSP_META + result[m.end():]
+    return result
 
 def convert_import(clause, expr, skip_name):
-    """Turn an import clause into const destructuring from a global."""
     out = []
     clause = clause.strip()
     m = re.search(r"\{([^}]*)\}", clause)
@@ -105,8 +92,7 @@ def convert_import(clause, expr, skip_name):
         names = []
         for part in m.group(1).split(","):
             part = part.strip()
-            if not part:
-                continue
+            if not part: continue
             if re.search(r"\sas\s", part):
                 a, b = [s.strip() for s in re.split(r"\sas\s", part, maxsplit=1)]
                 names.append(a if a == b else "%s: %s" % (a, b))
@@ -125,58 +111,45 @@ def convert_import(clause, expr, skip_name):
         out.append("const %s = %s;" % (default, expr))
     return " ".join(out)
 
-
 def prepare_react(code):
-    """Return (code_with_render, extra_vendor_files, missing_modules)."""
     extra, missing = [], []
-
     def repl(m):
         clause, mod = m.group(1), m.group(2)
-        if not clause:
-            return ""
+        if not clause: return ""
         base = "react-dom" if mod.startswith("react-dom") else mod
         if base in MODULES:
             glob, files = MODULES[base]
             for f in files:
-                if f not in extra:
-                    extra.append(f)
+                if f not in extra: extra.append(f)
             return convert_import(clause, "window." + glob, glob) + "\n"
         missing.append(mod)
         return convert_import(clause, "window.__stub(%s)" % json.dumps(mod), None) + "\n"
-
     code = IMPORT_RE.sub(repl, code)
     name = "App"
     m = re.search(r"export\s+default\s+function\s+([A-Za-z_$][\w$]*)", code)
     if m:
-        name = m.group(1)
-        code = code.replace(m.group(0), "function " + name, 1)
+        name = m.group(1); code = code.replace(m.group(0), "function " + name, 1)
     else:
         m = re.search(r"export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$", code, re.M)
         if m:
-            name = m.group(1)
-            code = code.replace(m.group(0), "", 1)
+            name = m.group(1); code = code.replace(m.group(0), "", 1)
         else:
             code, n = re.subn(r"export\s+default\s+", "const __Default = ", code, count=1)
-            if n:
-                name = "__Default"
+            if n: name = "__Default"
     code = re.sub(r"^\s*export\s+(?=(?:const|let|var|function|class)\b)", "", code, flags=re.M)
     code += ("\nReactDOM.createRoot(document.getElementById('root'))"
              ".render(React.createElement(%s));\n" % name)
     return code, extra, missing
 
-
 def needed_files(type_, code):
-    if type_ != "react":
-        return []
+    if type_ != "react": return []
     _code, extra, _missing = prepare_react(code)
     return BASE_FILES + extra
-
 
 def detect_type(code, filename=""):
     ext = os.path.splitext(filename)[1].lower()
     full_html = re.search(r"<!doctype\s+html|<html[\s>]", code, re.I)
-    if ext in (".jsx", ".tsx"):
-        return "react"
+    if ext in (".jsx", ".tsx"): return "react"
     if not full_html and re.search(
             r"from\s+['\"]react['\"]|export\s+default|useState|<[A-Z][A-Za-z]*[\s/>]", code):
         return "react"
@@ -186,13 +159,11 @@ def detect_type(code, filename=""):
         return "html"
     return "js"
 
-
 def notice_page(text):
     safe = text.replace("&", "&amp;").replace("<", "&lt;")
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'>" + CSP_META +
             "</head><body style='font-family:system-ui;padding:2rem;max-width:40rem'>"
             "<h3>Cannot run this artifact</h3><p>%s</p></body></html>" % safe)
-
 
 def build_srcdoc(type_, code, vendor_dir):
     if type_ == "html":
@@ -213,9 +184,9 @@ def build_srcdoc(type_, code, vendor_dir):
     warn = ""
     if missing:
         msg = json.dumps("Not available offline, these parts may be blank: " + ", ".join(missing))
-        warn = "<script>console.warn(" + msg.replace("</", "<\\/") + ")</script>"
+        warn = "<script>console.warn(" + msg.replace("</", "</") + ")</script>"
     first = "<script>" + esc_script(libs[0]) + "</script><script>" + esc_script(libs[1]) + "</script>"
-    alias = "<script>window.react=window.React;</script>"  # lucide looks for a lowercase global
+    alias = "<script>window.react=window.React;</script>"
     rest = "".join("<script>" + esc_script(t) + "</script>" for t in libs[2:])
     return (head + '<body><div id="root"></div>' + "<script>" + STUB_JS + "</script>" + warn +
             first + alias + rest +

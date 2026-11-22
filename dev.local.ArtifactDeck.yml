@@ -8,6 +8,7 @@ finish-args:
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
+  - --filesystem=xdg-data/artifact-deck:create
 modules:
   - name: artifact-deck
     buildsystem: simple
