@@ -17,3 +17,10 @@ build-dir/
 *.flatpak
 app.log
 __pycache__/
+
+# Flatpak build artifacts
+.flatpak-builder/
+build-dir/
+*.flatpak
+app.log
+__pycache__/
