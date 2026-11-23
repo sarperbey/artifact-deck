@@ -384,11 +384,10 @@ class RunnerPage(Adw.NavigationPage):
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, default_width=1000, default_height=700,
+        super().__init__(application=app, default_width=1100, default_height=720,
                          title="Artifact Deck")
         self.lib = Library()
-        self.settings = Settings()
-        self.side_rows = []
+        self.runner = None
 
         css = Gtk.CssProvider()
         if hasattr(css, "load_from_string"):
@@ -398,11 +397,11 @@ class MainWindow(Adw.ApplicationWindow):
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        self.setup_theme()
-
         self.toasts = Adw.ToastOverlay()
-        self.nav = Adw.NavigationView()
-        self.toasts.set_child(self.nav)
+        self.split = Adw.NavigationSplitView()
+        self.split.set_min_sidebar_width(230)
+        self.split.set_max_sidebar_width(340)
+        self.toasts.set_child(self.split)
         self.set_content(self.toasts)
 
         add_btn = Gtk.Button(icon_name="document-open-symbolic", tooltip_text="Add from file")
@@ -413,35 +412,29 @@ class MainWindow(Adw.ApplicationWindow):
                                            tooltip_text="Search")
         self.fav_btn = Gtk.ToggleButton(icon_name="starred-symbolic",
                                         tooltip_text="Favorites only")
-        self.fav_btn.connect("toggled", lambda *_: self.flow.invalidate_filter())
-
-        self.sidebar_btn = Gtk.ToggleButton(icon_name="sidebar-show-symbolic",
-                                            tooltip_text="Show sidebar", active=True)
-        theme_btn = Gtk.MenuButton(icon_name="preferences-desktop-appearance-symbolic",
-                                   tooltip_text="Appearance", menu_model=self.build_theme_menu())
+        self.fav_btn.connect("toggled", lambda *_: self.list.invalidate_filter())
 
         header = Adw.HeaderBar()
-        header.pack_start(self.sidebar_btn)
+        header.set_title_widget(Adw.WindowTitle(title="Library", subtitle="Artifact Deck"))
         header.pack_start(add_btn)
         header.pack_start(paste_btn)
-        header.pack_end(theme_btn)
         header.pack_end(self.search_btn)
         header.pack_end(self.fav_btn)
 
         self.entry = Gtk.SearchEntry(hexpand=True)
-        self.entry.connect("search-changed", lambda *_: self.flow.invalidate_filter())
+        self.entry.connect("search-changed", lambda *_: self.list.invalidate_filter())
         self.search_bar = Gtk.SearchBar(child=self.entry)
         self.search_bar.connect_entry(self.entry)
         self.search_bar.set_key_capture_widget(self)
         self.search_btn.bind_property("active", self.search_bar, "search-mode-enabled",
                                       GObject.BindingFlags.BIDIRECTIONAL)
 
-        self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
-                                min_children_per_line=1, max_children_per_line=4,
-                                column_spacing=12, row_spacing=12, valign=Gtk.Align.START,
-                                margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        self.flow.set_filter_func(self.filter_func)
-        scroller = Gtk.ScrolledWindow(child=self.flow, vexpand=True)
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE,
+                                activate_on_single_click=True)
+        self.list.add_css_class("navigation-sidebar")
+        self.list.set_filter_func(self.filter_func)
+        self.list.connect("row-activated", lambda _l, row: self.on_run(row.art))
+        list_scroller = Gtk.ScrolledWindow(child=self.list, vexpand=True)
 
         empty = Adw.StatusPage(icon_name="applications-science-symbolic",
                                title="No artifacts yet",
@@ -449,42 +442,15 @@ class MainWindow(Adw.ApplicationWindow):
                                            "or paste code from the clipboard.")
         self.stack = Gtk.Stack()
         self.stack.add_named(empty, "empty")
-        self.stack.add_named(scroller, "grid")
+        self.stack.add_named(list_scroller, "list")
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
         toolbar.add_top_bar(self.search_bar)
         toolbar.set_content(self.stack)
+        self.split.set_sidebar(Adw.NavigationPage(title="Library", child=toolbar))
 
-        # -- sidebar: every artifact, drag to reorder, bin to delete --
-        self.side_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.side_list.add_css_class("navigation-sidebar")
-        self.side_list.set_placeholder(Gtk.Label(label="No artifacts yet", margin_top=24,
-                                                 css_classes=["dim-label"]))
-        self.side_list.connect("row-activated", self.on_side_activated)
-        side_scroll = Gtk.ScrolledWindow(child=self.side_list, vexpand=True,
-                                         hscrollbar_policy=Gtk.PolicyType.NEVER)
-        self.side_title = Adw.WindowTitle(title="Artifacts", subtitle="")
-        side_header = Adw.HeaderBar(show_end_title_buttons=False)
-        side_header.set_title_widget(self.side_title)
-        sidebar = Adw.ToolbarView()
-        sidebar.add_top_bar(side_header)
-        sidebar.set_content(side_scroll)
-
-        self.split = Adw.OverlaySplitView(sidebar=sidebar, content=toolbar,
-                                          min_sidebar_width=220, max_sidebar_width=320,
-                                          sidebar_width_fraction=0.28, show_sidebar=True)
-        self.sidebar_btn.bind_property("active", self.split, "show-sidebar",
-                                       GObject.BindingFlags.BIDIRECTIONAL
-                                       | GObject.BindingFlags.SYNC_CREATE)
-        # On narrow windows the sidebar becomes a slide-over panel.
-        self.set_size_request(360, 400)
-        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 640sp"))
-        bp.add_setter(self.split, "collapsed", True)
-        bp.add_setter(self.split, "show-sidebar", False)
-        self.add_breakpoint(bp)
-
-        self.nav.add(Adw.NavigationPage(title="Artifact Deck", child=self.split))
+        self.split.set_content(self.make_placeholder())
 
         drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         drop.connect("drop", self.on_drop)
@@ -492,141 +458,23 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.refresh()
 
-    # -- theme --
-
-    def setup_theme(self):
-        scheme = self.settings.get("theme", "system")
-        if scheme not in SCHEMES:
-            scheme = "system"
-        action = Gio.SimpleAction.new_stateful(
-            "theme", GLib.VariantType.new("s"), GLib.Variant.new_string(scheme))
-        action.connect("change-state", self.on_theme)
-        self.add_action(action)
-        Adw.StyleManager.get_default().set_color_scheme(SCHEMES[scheme])
-
-    def on_theme(self, action, value):
-        scheme = value.get_string()
-        if scheme not in SCHEMES:
-            return
-        action.set_state(value)
-        Adw.StyleManager.get_default().set_color_scheme(SCHEMES[scheme])
-        self.settings.set("theme", scheme)
-
-    def build_theme_menu(self):
-        section = Gio.Menu()
-        section.append("Follow system", "win.theme::system")
-        section.append("Light", "win.theme::light")
-        section.append("Dark", "win.theme::dark")
-        menu = Gio.Menu()
-        menu.append_section("Appearance", section)
-        return menu
-
-    # -- sidebar --
-
-    def build_sidebar(self):
-        self.side_list.remove_all()
-        self.side_rows = []
-        for a in self.lib.items:
-            row = self.make_side_row(a)
-            self.side_rows.append(row)
-            self.side_list.append(row)
-        n = len(self.lib.items)
-        self.side_title.set_subtitle("%d artifact%s" % (n, "" if n == 1 else "s") if n else "")
-
-    def make_side_row(self, a):
-        row = Gtk.ListBoxRow(activatable=True)
-        row.art = a
-
-        handle = Gtk.Image(icon_name="list-drag-handle-symbolic", tooltip_text="Drag to reorder")
-        handle.add_css_class("side-handle")
-        handle.set_cursor_from_name("grab")
-        dot = Gtk.Label(label="\u25cf")
-        dot.add_css_class("src-" + a["source"])
-        name = Gtk.Label(label=a["name"], xalign=0, ellipsize=Pango.EllipsizeMode.END)
-        sub = Gtk.Label(label="%s \u00b7 %s" % (SOURCES.get(a["source"], "Other"),
-                                                TYPES[a["type"]]), xalign=0)
-        sub.add_css_class("dim-label")
-        sub.add_css_class("caption")
-        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-        text.append(name)
-        text.append(sub)
-        trash = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
-                           tooltip_text="Delete")
-        trash.add_css_class("flat")
-        trash.connect("clicked", self.on_delete, a)
-
-        box = Gtk.Box(spacing=8, margin_top=4, margin_bottom=4)
-        for w in (handle, dot, text, trash):
-            box.append(w)
-        row.set_child(box)
-
-        # Drag by the handle; every row accepts drops.
-        src = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
-        src.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_STRING, a["id"])))
-        src.connect("drag-begin", lambda s, _d: s.set_icon(Gtk.WidgetPaintable.new(row), 12, 20))
-        handle.add_controller(src)
-
-        tgt = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
-        tgt.connect("motion", self.on_side_motion, row)
-        tgt.connect("leave", lambda *_: self.clear_drop_marks())
-        tgt.connect("drop", self.on_side_drop, row)
-        row.add_controller(tgt)
-
-        # Keyboard: Alt+Up / Alt+Down moves the focused row.
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", self.on_side_key, a)
-        row.add_controller(keys)
-        return row
-
-    def on_side_activated(self, _list, row):
-        if self.split.get_collapsed():
-            self.split.set_show_sidebar(False)
-        self.on_run(None, row.art)
-
-    def clear_drop_marks(self):
-        for r in self.side_rows:
-            r.remove_css_class("drop-before")
-            r.remove_css_class("drop-after")
-
-    def on_side_motion(self, _tgt, _x, y, row):
-        self.clear_drop_marks()
-        row.add_css_class("drop-after" if y > row.get_height() / 2 else "drop-before")
-        return Gdk.DragAction.MOVE
-
-    def on_side_drop(self, _tgt, value, _x, y, row):
-        self.clear_drop_marks()
-        src = next((a for a in self.lib.items if a["id"] == value), None)
-        if src is None or src is row.art:
-            return False
-        dst = self.lib.items.index(row.art) + (1 if y > row.get_height() / 2 else 0)
-        if self.lib.items.index(src) < dst:
-            dst -= 1
-        self.lib.move(src, dst)
-        GLib.idle_add(self.after_move, src)     # rebuild once the drag has finished
-        return True
-
-    def on_side_key(self, _ctrl, keyval, _code, state, a):
-        if not state & Gdk.ModifierType.ALT_MASK or keyval not in (Gdk.KEY_Up, Gdk.KEY_Down):
-            return False
-        idx = self.lib.items.index(a)
-        to = idx - 1 if keyval == Gdk.KEY_Up else idx + 1
-        if 0 <= to < len(self.lib.items):
-            self.lib.move(a, to)
-            self.after_move(a)
-        return True
-
-    def after_move(self, a):
-        self.refresh()
-        for r in self.side_rows:
-            if r.art is a:
-                r.grab_focus()
-        return False
+    def make_placeholder(self):
+        page = Adw.StatusPage(icon_name="applications-science-symbolic",
+                              title="Pick an artifact",
+                              description="Choose one from the library to run it here, "
+                                          "sandboxed and offline.")
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(title="Artifact Deck",
+                                                subtitle="Sandboxed · offline"))
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(page)
+        return Adw.NavigationPage(title="Artifact Deck", child=toolbar)
 
     # -- library view --
 
-    def filter_func(self, child):
-        a = child.get_child().art
+    def filter_func(self, row):
+        a = row.art
         if self.fav_btn.get_active() and not a["fav"]:
             return False
         q = self.entry.get_text().strip().lower()
@@ -636,21 +484,31 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def refresh(self):
-        self.flow.remove_all()
+        child = self.list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.list.remove(child)
+            child = nxt
         for a in self.lib.items:
-            self.flow.append(self.make_card(a))
-        self.stack.set_visible_child_name("grid" if self.lib.items else "empty")
-        self.build_sidebar()
+            self.list.append(self.make_row(a))
+        self.stack.set_visible_child_name("list" if self.lib.items else "empty")
 
-    def make_card(self, a):
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card.add_css_class("card")
-        card.add_css_class("deck-card")
-        card.art = a
-
-        title = Gtk.Label(label=a["name"], xalign=0, hexpand=True,
-                          ellipsize=Pango.EllipsizeMode.END)
-        title.add_css_class("title-4")
+    def make_row(self, a):
+        row = Gtk.ListBoxRow()
+        row.art = a
+        box = Gtk.Box(spacing=8, margin_top=6, margin_bottom=6,
+                      margin_start=8, margin_end=8)
+        dot = Gtk.Label(label="●")
+        dot.add_css_class("src-" + a["source"])
+        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+        name = Gtk.Label(label=a["name"], xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        name.add_css_class("heading")
+        sub = Gtk.Label(label="%s · %s" % (SOURCES.get(a["source"], "Other"),
+                                                TYPES[a["type"]]), xalign=0)
+        sub.add_css_class("dim-label")
+        sub.add_css_class("caption")
+        texts.append(name)
+        texts.append(sub)
         star = Gtk.ToggleButton(icon_name="starred-symbolic", active=a["fav"],
                                 valign=Gtk.Align.CENTER, tooltip_text="Favorite")
         star.add_css_class("flat")
@@ -659,49 +517,40 @@ class MainWindow(Adw.ApplicationWindow):
                            tooltip_text="Delete")
         trash.add_css_class("flat")
         trash.connect("clicked", self.on_delete, a)
-        top = Gtk.Box(spacing=4)
-        for w in (title, star, trash):
-            top.append(w)
+        for w in (dot, texts, star, trash):
+            box.append(w)
+        row.set_child(box)
+        return row
 
-        dot = Gtk.Label(label="\u25cf")
-        dot.add_css_class("src-" + a["source"])
-        sub = Gtk.Label(label="%s \u00b7 %s" % (SOURCES.get(a["source"], "Other"),
-                                                TYPES[a["type"]]), xalign=0)
-        sub.add_css_class("dim-label")
-        sub.add_css_class("caption")
-        meta = Gtk.Box(spacing=6)
-        meta.append(dot)
-        meta.append(sub)
-
-        run = Gtk.Button(label="Run", halign=Gtk.Align.START)
-        run.add_css_class("suggested-action")
-        run.connect("clicked", self.on_run, a)
-
-        card.append(top)
-        card.append(meta)
-        if a.get("tags"):
-            tags = Gtk.Label(label=", ".join(a["tags"]), xalign=0, wrap=True)
-            tags.add_css_class("dim-label")
-            tags.add_css_class("caption")
-            card.append(tags)
-        card.append(run)
-        return card
-
-    def on_run(self, _btn, a):
+    def on_run(self, a):
         a["runs"] += 1
         a["last_run"] = int(time.time())
         self.lib.save()
-        self.nav.push(RunnerPage(self.lib, a))
+        if self.runner is not None:
+            try:
+                self.runner.web.terminate_web_process()
+            except Exception:
+                pass
+        self.runner = RunnerPage(self.lib, a)
+        self.split.set_content(self.runner)
+        self.split.set_show_content(True)
 
     def on_fav(self, btn, a):
         a["fav"] = btn.get_active()
         self.lib.save()
-        self.flow.invalidate_filter()
+        self.list.invalidate_filter()
 
     def on_delete(self, _btn, a):
         removed = self.lib.remove(a)
+        if self.runner is not None and self.runner.art["id"] == a["id"]:
+            try:
+                self.runner.web.terminate_web_process()
+            except Exception:
+                pass
+            self.runner = None
+            self.split.set_content(self.make_placeholder())
         self.refresh()
-        toast = Adw.Toast(title="Deleted \u201c%s\u201d" % a["name"])
+        toast = Adw.Toast(title="Deleted “%s”" % a["name"])
         toast.set_button_label("Undo")
 
         def undo(*_):
@@ -796,10 +645,12 @@ class MainWindow(Adw.ApplicationWindow):
                 return
             source = list(SOURCES)[src_row.get_selected()]
             tags = [t.strip() for t in tags_row.get_text().split(",") if t.strip()]
-            self.lib.add(name_row.get_text().strip(), source, type_, code, tags)
+            a = self.lib.add(name_row.get_text().strip(), source, type_, code, tags)
             self.refresh()
+            self.on_run(a)
         dlg.connect("response", on_response)
         dlg.present(self)
+
 
 class App(Adw.Application):
     def __init__(self):
