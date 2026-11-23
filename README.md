@@ -11,6 +11,8 @@ A small desktop app for Ubuntu that keeps all your AI-made artifacts (from Claud
 ## What it does
 
 - **One library.** Every artifact is a card showing its name, which AI made it, and its type (HTML, JavaScript or React).
+- **Sidebar.** All your artifacts are listed on the left. Drag them into the order you like, or delete them from there.
+- **Light, dark or follow system.** Pick your look from the appearance button in the top bar.
 - **One-click run.** Press **Run** and the artifact opens full-size inside the app.
 - **Safe by default.** Artifacts cannot reach the internet, open pop-ups, or ask for your camera, microphone or location.
 - **Remembers progress.** Scores, trackers and settings an artifact saves are kept between runs, separately for each artifact.
@@ -39,7 +41,11 @@ See `install.md` for the native install and troubleshooting, `packing.md` for pa
 | Run an artifact | Press **Run** on its card |
 | Find one | Press the magnifier, or just start typing |
 | Mark favorites | Press the star, then use the star in the top bar to show only favorites |
-| Delete one | Press the bin. An **Undo** message appears for a few seconds |
+| Open one from the sidebar | Click its name in the left list |
+| Change the order | Drag the handle (the grip on the left of a sidebar row) up or down. With the keyboard: select a row and press **Alt+Up** or **Alt+Down**. The cards follow the same order |
+| Hide or show the sidebar | Press the sidebar button at the top left (it hides itself on narrow windows) |
+| Change light or dark mode | Press the appearance button in the top bar and choose **Follow system**, **Light** or **Dark** |
+| Delete one | Press the bin, on the card or in the sidebar. An **Undo** message appears for a few seconds |
 | See errors | In the runner, press the terminal button to open the console |
 | Start an artifact fresh | In the runner, press the clear button (**Reset saved data**) |
 
@@ -71,7 +77,8 @@ This is a strong barrier for ordinary artifacts, but it is not a guarantee again
 Everything lives in `~/.local/share/artifact-deck/`:
 
 - `artifacts/` your artifact files
-- `library.json` the list, names and favorites
+- `library.json` the list, its order, names and favorites
+- `settings.json` your light/dark choice
 - `state/` each artifact's saved data
 - `vendor/` the downloaded React libraries
 

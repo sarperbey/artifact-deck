@@ -39,6 +39,8 @@ TYPES = {"html": "HTML", "js": "JavaScript", "react": "React"}
 EXT = {"html": ".html", "js": ".js", "react": ".jsx"}
 ACCEPTED = (".html", ".htm", ".js", ".jsx", ".tsx", ".txt")
 MAX_BYTES = 5 * 1024 * 1024
+SCHEMES = {"system": Adw.ColorScheme.DEFAULT, "light": Adw.ColorScheme.FORCE_LIGHT,
+           "dark": Adw.ColorScheme.FORCE_DARK}
 
 CSS = """
 .deck-card { padding: 14px; }
@@ -46,9 +48,38 @@ CSS = """
 .src-gemini { color: @blue_3; }
 .src-deepseek { color: @purple_3; }
 .src-other { color: @green_4; }
+.side-handle { opacity: 0.5; }
+.drop-before { box-shadow: inset 0 2px 0 0 @accent_bg_color; }
+.drop-after { box-shadow: inset 0 -2px 0 0 @accent_bg_color; }
 """
 
 # ---------------------------------------------------------------- storage --
+
+class Settings:
+    """Tiny key/value store for app preferences (currently just the theme)."""
+
+    def __init__(self):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        self.path = os.path.join(DATA_DIR, "settings.json")
+        self.data = {}
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self.data = data
+        except (OSError, ValueError):
+            pass
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def set(self, key, value):
+        self.data[key] = value
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
+        os.replace(tmp, self.path)
+
 
 class Library:
     def __init__(self):
@@ -117,6 +148,12 @@ class Library:
     def restore(self, a, code, idx):
         self.write_code(a, code)
         self.items.insert(min(idx, len(self.items)), a)
+        self.save()
+
+    def move(self, a, to):
+        """Put artifact `a` at position `to` (counted after it is taken out of the list)."""
+        self.items.remove(a)
+        self.items.insert(max(0, min(to, len(self.items))), a)
         self.save()
 
 # ----------------------------------------------------------------- runner --
@@ -350,6 +387,8 @@ class MainWindow(Adw.ApplicationWindow):
         super().__init__(application=app, default_width=1000, default_height=700,
                          title="Artifact Deck")
         self.lib = Library()
+        self.settings = Settings()
+        self.side_rows = []
 
         css = Gtk.CssProvider()
         if hasattr(css, "load_from_string"):
@@ -358,6 +397,8 @@ class MainWindow(Adw.ApplicationWindow):
             css.load_from_data(CSS.encode())
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.setup_theme()
 
         self.toasts = Adw.ToastOverlay()
         self.nav = Adw.NavigationView()
@@ -374,9 +415,16 @@ class MainWindow(Adw.ApplicationWindow):
                                         tooltip_text="Favorites only")
         self.fav_btn.connect("toggled", lambda *_: self.flow.invalidate_filter())
 
+        self.sidebar_btn = Gtk.ToggleButton(icon_name="sidebar-show-symbolic",
+                                            tooltip_text="Show sidebar", active=True)
+        theme_btn = Gtk.MenuButton(icon_name="preferences-desktop-appearance-symbolic",
+                                   tooltip_text="Appearance", menu_model=self.build_theme_menu())
+
         header = Adw.HeaderBar()
+        header.pack_start(self.sidebar_btn)
         header.pack_start(add_btn)
         header.pack_start(paste_btn)
+        header.pack_end(theme_btn)
         header.pack_end(self.search_btn)
         header.pack_end(self.fav_btn)
 
@@ -408,13 +456,172 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar.add_top_bar(self.search_bar)
         toolbar.set_content(self.stack)
 
-        self.nav.add(Adw.NavigationPage(title="Artifact Deck", child=toolbar))
+        # -- sidebar: every artifact, drag to reorder, bin to delete --
+        self.side_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.side_list.add_css_class("navigation-sidebar")
+        self.side_list.set_placeholder(Gtk.Label(label="No artifacts yet", margin_top=24,
+                                                 css_classes=["dim-label"]))
+        self.side_list.connect("row-activated", self.on_side_activated)
+        side_scroll = Gtk.ScrolledWindow(child=self.side_list, vexpand=True,
+                                         hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.side_title = Adw.WindowTitle(title="Artifacts", subtitle="")
+        side_header = Adw.HeaderBar(show_end_title_buttons=False)
+        side_header.set_title_widget(self.side_title)
+        sidebar = Adw.ToolbarView()
+        sidebar.add_top_bar(side_header)
+        sidebar.set_content(side_scroll)
+
+        self.split = Adw.OverlaySplitView(sidebar=sidebar, content=toolbar,
+                                          min_sidebar_width=220, max_sidebar_width=320,
+                                          sidebar_width_fraction=0.28, show_sidebar=True)
+        self.sidebar_btn.bind_property("active", self.split, "show-sidebar",
+                                       GObject.BindingFlags.BIDIRECTIONAL
+                                       | GObject.BindingFlags.SYNC_CREATE)
+        # On narrow windows the sidebar becomes a slide-over panel.
+        self.set_size_request(360, 400)
+        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 640sp"))
+        bp.add_setter(self.split, "collapsed", True)
+        bp.add_setter(self.split, "show-sidebar", False)
+        self.add_breakpoint(bp)
+
+        self.nav.add(Adw.NavigationPage(title="Artifact Deck", child=self.split))
 
         drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         drop.connect("drop", self.on_drop)
         self.add_controller(drop)
 
         self.refresh()
+
+    # -- theme --
+
+    def setup_theme(self):
+        scheme = self.settings.get("theme", "system")
+        if scheme not in SCHEMES:
+            scheme = "system"
+        action = Gio.SimpleAction.new_stateful(
+            "theme", GLib.VariantType.new("s"), GLib.Variant.new_string(scheme))
+        action.connect("change-state", self.on_theme)
+        self.add_action(action)
+        Adw.StyleManager.get_default().set_color_scheme(SCHEMES[scheme])
+
+    def on_theme(self, action, value):
+        scheme = value.get_string()
+        if scheme not in SCHEMES:
+            return
+        action.set_state(value)
+        Adw.StyleManager.get_default().set_color_scheme(SCHEMES[scheme])
+        self.settings.set("theme", scheme)
+
+    def build_theme_menu(self):
+        section = Gio.Menu()
+        section.append("Follow system", "win.theme::system")
+        section.append("Light", "win.theme::light")
+        section.append("Dark", "win.theme::dark")
+        menu = Gio.Menu()
+        menu.append_section("Appearance", section)
+        return menu
+
+    # -- sidebar --
+
+    def build_sidebar(self):
+        self.side_list.remove_all()
+        self.side_rows = []
+        for a in self.lib.items:
+            row = self.make_side_row(a)
+            self.side_rows.append(row)
+            self.side_list.append(row)
+        n = len(self.lib.items)
+        self.side_title.set_subtitle("%d artifact%s" % (n, "" if n == 1 else "s") if n else "")
+
+    def make_side_row(self, a):
+        row = Gtk.ListBoxRow(activatable=True)
+        row.art = a
+
+        handle = Gtk.Image(icon_name="list-drag-handle-symbolic", tooltip_text="Drag to reorder")
+        handle.add_css_class("side-handle")
+        handle.set_cursor_from_name("grab")
+        dot = Gtk.Label(label="\u25cf")
+        dot.add_css_class("src-" + a["source"])
+        name = Gtk.Label(label=a["name"], xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        sub = Gtk.Label(label="%s \u00b7 %s" % (SOURCES.get(a["source"], "Other"),
+                                                TYPES[a["type"]]), xalign=0)
+        sub.add_css_class("dim-label")
+        sub.add_css_class("caption")
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+        text.append(name)
+        text.append(sub)
+        trash = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
+                           tooltip_text="Delete")
+        trash.add_css_class("flat")
+        trash.connect("clicked", self.on_delete, a)
+
+        box = Gtk.Box(spacing=8, margin_top=4, margin_bottom=4)
+        for w in (handle, dot, text, trash):
+            box.append(w)
+        row.set_child(box)
+
+        # Drag by the handle; every row accepts drops.
+        src = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+        src.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(
+            GObject.Value(GObject.TYPE_STRING, a["id"])))
+        src.connect("drag-begin", lambda s, _d: s.set_icon(Gtk.WidgetPaintable.new(row), 12, 20))
+        handle.add_controller(src)
+
+        tgt = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        tgt.connect("motion", self.on_side_motion, row)
+        tgt.connect("leave", lambda *_: self.clear_drop_marks())
+        tgt.connect("drop", self.on_side_drop, row)
+        row.add_controller(tgt)
+
+        # Keyboard: Alt+Up / Alt+Down moves the focused row.
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self.on_side_key, a)
+        row.add_controller(keys)
+        return row
+
+    def on_side_activated(self, _list, row):
+        if self.split.get_collapsed():
+            self.split.set_show_sidebar(False)
+        self.on_run(None, row.art)
+
+    def clear_drop_marks(self):
+        for r in self.side_rows:
+            r.remove_css_class("drop-before")
+            r.remove_css_class("drop-after")
+
+    def on_side_motion(self, _tgt, _x, y, row):
+        self.clear_drop_marks()
+        row.add_css_class("drop-after" if y > row.get_height() / 2 else "drop-before")
+        return Gdk.DragAction.MOVE
+
+    def on_side_drop(self, _tgt, value, _x, y, row):
+        self.clear_drop_marks()
+        src = next((a for a in self.lib.items if a["id"] == value), None)
+        if src is None or src is row.art:
+            return False
+        dst = self.lib.items.index(row.art) + (1 if y > row.get_height() / 2 else 0)
+        if self.lib.items.index(src) < dst:
+            dst -= 1
+        self.lib.move(src, dst)
+        GLib.idle_add(self.after_move, src)     # rebuild once the drag has finished
+        return True
+
+    def on_side_key(self, _ctrl, keyval, _code, state, a):
+        if not state & Gdk.ModifierType.ALT_MASK or keyval not in (Gdk.KEY_Up, Gdk.KEY_Down):
+            return False
+        idx = self.lib.items.index(a)
+        to = idx - 1 if keyval == Gdk.KEY_Up else idx + 1
+        if 0 <= to < len(self.lib.items):
+            self.lib.move(a, to)
+            self.after_move(a)
+        return True
+
+    def after_move(self, a):
+        self.refresh()
+        for r in self.side_rows:
+            if r.art is a:
+                r.grab_focus()
+        return False
 
     # -- library view --
 
@@ -433,6 +640,7 @@ class MainWindow(Adw.ApplicationWindow):
         for a in self.lib.items:
             self.flow.append(self.make_card(a))
         self.stack.set_visible_child_name("grid" if self.lib.items else "empty")
+        self.build_sidebar()
 
     def make_card(self, a):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
